@@ -25,14 +25,21 @@ class Vm:
     def execute(self):
         while self.ip < len(self.program):
             self.execute_op()
+    
+    def current_op(self):
+        return self.program[self.ip]
+
+    def skip_until(self, op):
+        while self.current_op() != op:
+            self.ip += 1
 
     def execute_op(self):
         assert Op.COUNT == 8, "unexhaustive handling of operations"
 
-        op = self.program[self.ip]
+        op = self.current_op()
         if op == Op.PUSH:
             self.ip += 1
-            self.stack.append(self.program[self.ip])
+            self.stack.append(self.current_op())
         elif op == Op.ADD:
             b = self.stack.pop()
             a = self.stack.pop()
@@ -48,27 +55,22 @@ class Vm:
             cond = self.stack.pop()
             if cond:
                 self.ip += 1
-                while self.program[self.ip] != Op.END:
-                    if self.program[self.ip] == Op.ELSE:
-                        while self.program[self.ip] != Op.END:
-                            self.ip += 1
+                while self.current_op() != Op.END:
+                    if self.current_op() == Op.ELSE:
+                        self.skip_until(Op.END)
                     else: 
                         self.execute_op()
             else:
-                while self.program[self.ip] != Op.END:
+                while self.current_op() != Op.END:
                     self.ip += 1
-                    if self.program[self.ip] == Op.ELSE:
+                    if self.current_op() == Op.ELSE:
                         self.ip += 1
-                        while self.program[self.ip] != Op.END:
-                            self.execute_op()
+                        self.skip_until(Op.END)
         else:
             assert False, "unreachable"
 
         self.ip += 1
     
-    def load_from_program(self, program):
-        self.program = program
-
     def load_from_file(self, file_path):
         with open(file_path, 'rb') as f:
             self.program = pickle.load(f)
@@ -77,57 +79,60 @@ class Vm:
         with open(file_path, 'wb') as f:
             pickle.dump(self.program, f)
 
-def parse(code):
+def lex(code):
     program = []
-    tokens = code.split(' ')
-    for token in tokens:
-        if token == '+':
+    words = [word
+              for word in code.split(' ')
+              if len(word) > 0]
+    for word in words:
+        if word == '+':
             program.append(Op.ADD)
-        elif token == '.':
+        elif word == '.':
             program.append(Op.DUMP)
-        elif token == '=':
+        elif word == '=':
             program.append(Op.EQUALS)
-        elif token == 'if':
+        elif word == 'if':
             program.append(Op.IF)
-        elif token == 'else':
+        elif word == 'else':
             program.append(Op.ELSE)
-        elif token == 'end':
+        elif word == 'end':
             program.append(Op.END)
         else:
             program.append(Op.PUSH)
             try: 
-                program.append(int(token))
+                program.append(int(word))
             except ValueError:
                 try: 
-                    program.append(float(token))
+                    program.append(float(word))
                 except ValueError:
-                    raise Exception('unknown token: %s' % bytes(token, 'utf-8'))
+                    raise Exception('unknown word: %s' % bytes(word, 'utf-8'))
     return program
 
-def parse_file(file_path):
+def lex_file(file_path):
     with open(file_path, 'r') as f:
         lines = [line 
                  for line in f.read().split('\n')
                  if len(line) > 0]
         code = ' '.join(lines)
-        return parse(code)
+        return lex(code)
 
 def repl():
-    vm = Vm()
+    stack = []
     while True:
         try:
             line = prompt('> ')
-            program = parse(line)
-            vm.load_from_program(program)
+            program = lex(line)
+            vm = Vm(program, stack)
             vm.execute()
+            print(vm.stack)
         except (KeyboardInterrupt, EOFError):
             exit(0)
         except Exception as e:
             print('error: ' + str(e), file=sys.stderr)
 
-if __name__ == '__main__':
+def main():
     parser = argparse.ArgumentParser()
-    subparsers = parser.add_subparsers(title='subcommands', required=True, dest='subparser_name')
+    subparsers = parser.add_subparsers(title='subcommands', dest='subparser_name')
 
     execute_names = ['execute', 'e']
     execute = subparsers.add_parser(execute_names[0], 
@@ -155,13 +160,18 @@ if __name__ == '__main__':
             vm.load_from_file(args.input_file)
             vm.execute()
         elif args.subparser_name in compile_names:
-            program = parse_file(args.input_file)
+            program = lex_file(args.input_file)
             vm = Vm(program)
             vm.save_to_file(args.output)
 
             if args.run:
                 vm.load_from_file(args.output)
                 vm.execute()
+        else:
+            repl()
     except Exception as e:
         print('error: %s' % e, file=sys.stderr)
         exit(1)
+
+if __name__ == '__main__':
+    main()
