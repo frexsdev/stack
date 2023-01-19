@@ -6,15 +6,28 @@ import argparse
 from enum import IntEnum, auto
 from prompt_toolkit import prompt
 
+STACK_MAGIC = 0x535441434b
+STACK_VERSION = 1.0
+
 class Op(IntEnum):
+    # stack
     PUSH = auto()
+
+    # arithmetics
     ADD = auto()
-    DUMP = auto()
+
+    # boolean
     EQUALS = auto()
+
+    # blocks
     IF = auto()
     ELSE = auto()
+    WHILE = auto()
     END = auto()
     COUNT = auto()
+
+    # others
+    DUMP = auto()
 
 class Vm:
     def __init__(self, program=[], stack=[]):
@@ -37,21 +50,28 @@ class Vm:
         assert Op.COUNT == 8, "unexhaustive handling of operations"
 
         op = self.current_op()
+        # stack
         if op == Op.PUSH:
             self.ip += 1
             self.stack.append(self.current_op())
+
+        # arithmetics
         elif op == Op.ADD:
             b = self.stack.pop()
             a = self.stack.pop()
             self.stack.append(a + b)
-        elif op == Op.DUMP:
-            x = self.stack.pop()
-            print(x)
+
+        # boolean
         elif op == Op.EQUALS:
             b = self.stack.pop()
             a = self.stack.pop()
             self.stack.append(a == b)
+
+        # blocks
         elif op == Op.IF:
+            if not Op.END in self.program[self.ip:]:
+                raise Exception('if op requires an end')
+
             cond = self.stack.pop()
             if cond:
                 self.ip += 1
@@ -65,7 +85,30 @@ class Vm:
                     self.ip += 1
                     if self.current_op() == Op.ELSE:
                         self.ip += 1
-                        self.skip_until(Op.END)
+                        while self.current_op() != Op.END:
+                            self.execute_op()
+        elif op == Op.ELSE:
+            raise Exception('else op requires an if')
+        elif op == Op.WHILE:
+            if not Op.END in self.program[self.ip:]:
+                raise Exception('while op requires an end')
+
+            cond = self.stack.pop()
+            self.ip += 1
+            while_ip = self.ip
+            while cond:
+                if self.current_op() == Op.END:
+                    self.ip = while_ip
+                self.execute_op()
+            self.skip_until(Op.END)
+        elif op == Op.END:
+            raise Exception('end op should close an if or else block')
+
+        # others
+        elif op == Op.DUMP:
+            x = self.stack.pop()
+            print(x)
+
         else:
             assert False, "unreachable"
 
@@ -73,10 +116,21 @@ class Vm:
     
     def load_from_file(self, file_path):
         with open(file_path, 'rb') as f:
-            self.program = pickle.load(f)
+            magic = pickle.load(f)
+            if magic != STACK_MAGIC:
+                raise Exception('invalid file format')
+
+            version = pickle.load(f)
+            if version != STACK_VERSION:
+                raise Exception('invalid file version')
+
+            program = pickle.load(f)
+            self.program = program
 
     def save_to_file(self, file_path):
         with open(file_path, 'wb') as f:
+            pickle.dump(STACK_MAGIC, f)
+            pickle.dump(STACK_VERSION, f)
             pickle.dump(self.program, f)
 
 def lex(code):
@@ -95,6 +149,8 @@ def lex(code):
             program.append(Op.IF)
         elif word == 'else':
             program.append(Op.ELSE)
+        elif word == 'while':
+            program.append(Op.WHILE)
         elif word == 'end':
             program.append(Op.END)
         else:
@@ -110,7 +166,7 @@ def lex(code):
 
 def lex_file(file_path):
     with open(file_path, 'r') as f:
-        lines = [line 
+        lines = [line
                  for line in f.read().split('\n')
                  if len(line) > 0]
         code = ' '.join(lines)
